@@ -38,7 +38,8 @@ pub mod dao {
         VotePeriodNotEnded,
         NotEnoughBalance,
         AlreadyVoted,
-        ProposalNotAccepted
+        ProposalNotAccepted,
+        ProposalVoteNotFound,
         // <-- ADD
     }
 
@@ -59,10 +60,10 @@ pub mod dao {
 
         // ADD -->
         to: AccountId,
-        amount: u128,
         vote_start: u64,
         vote_end: u64,
         executed: bool,
+        amount: u128,
         // <-- ADD
     }
 
@@ -80,9 +81,9 @@ pub mod dao {
 
     pub struct ProposalVote {
         // to implement
-        count: u32,
-        for_wait: u32,
-        against_wait: u32,
+        count: u8,              // number of votes
+        for_weight: u128,       // weight total for for
+        against_weight: u128,   // weight total for against
     }
 
     #[ink(storage)]
@@ -93,12 +94,10 @@ pub mod dao {
         governance_token: AccountId,
         quorum: u8,
         proposal_id: ProposalId,
-        proposals: Mapping<ProposalId, Proposal>,
 
-        voters: Mapping<AccountId, ProposalId>,     // AccountId is a voted account.
-                                                    // ProposalId is the proposal that the account
-                                                    // voted for.
-        proposalvotes: Mapping<ProposalId, ProposalVote>,
+        // Mapping
+        proposals: Mapping<ProposalId, Proposal>,
+        proposal_votes: Mapping<ProposalId, ProposalVote>,
         // <-- ADD
     }
 
@@ -109,12 +108,11 @@ pub mod dao {
 
             // ADD -->
             Self {
-                governance_token: governance_token,     // ?
+                governance_token: governance_token,
                 quorum: quorum,
                 proposal_id: 0,
                 proposals: Mapping::default(),
-                voters: Mapping::default(),
-                proposalvotes: Mapping::default(),
+                proposal_votes: Mapping::default(),
             }
             // <-- ADD
         }
@@ -133,21 +131,33 @@ pub mod dao {
                 return Err(GovernorError::AmountShouldNotBeZero)
             }
 
+            // <--
+
+            // I have not been able to implement a check that the amount does not exceed 
+            // the total supply of governance tokens.
+
+            // -->
+
             if duration == 0 {
                 return Err(GovernorError::DurationError)
             }
 
             let current = self.env().block_timestamp();
-
             let proposal: Proposal = Proposal {
                 to: to,
-                amount: amount,
                 vote_start: current,
                 vote_end: current + duration * ONE_MINUTE,
                 executed: false,
+                amount: amount,
             };
-
             self.proposals.insert(self.proposal_id, &proposal);
+
+            let proposal_vote: ProposalVote = ProposalVote {
+                count: 0,
+                for_weight: 0,
+                against_weight: 0,
+            };
+            self.proposal_votes.insert(self.proposal_id, &proposal_vote);
 
             self.proposal_id += 1;
 
@@ -164,6 +174,10 @@ pub mod dao {
             // unimplemented!()     // DEL
 
             // ADD -->
+            let total_supply: u128;
+            let amount: u128;
+            let weight: u128;
+
             if let Err(result) = self.get_proposal(proposal_id) {
                 return Err(GovernorError::ProposalNotFound)
             }
@@ -174,32 +188,48 @@ pub mod dao {
             }
 
             let current = self.env().block_timestamp();
-            if proposal.vote_end > current {
+            if proposal.vote_end <= current {
                 return Err(GovernorError::VotePeriodEnded)
             }
 
-            let caller: AccountId;          // Voter's AccountId
+            // -->
+
+            // I haven't been able to implement the voted check.
+            // (GovernorError::AlreadyVoted)
+
+            // <--
+
+            let caller: AccountId;      // Voter's AccountId
             caller = self.env().caller();
 
-            // Checking the latest proposal voted on by the voter
-            let latest_proposal_id: Option<ProposalId> = self.voters.get(caller);
-                match latest_proposal_id {
-                    Some(latest_proposal_id) => {
-                    if latest_proposal_id == proposal_id {
-                        return Err(GovernorError::AlreadyVoted)
-                    }
-                }
-                None => {
-                }
+            // -->
+
+            // I haven't been able to implement governonce tokens.
+            // Therefore, it was not possible to obtain the amount of
+            // governance tokens owned by the caller.
+
+            // <--
+
+            // DEBUG -->
+            total_supply = 1000;
+            amount = 600;
+            weight = amount * 100 / total_supply;
+            // <-- DEBUG
+
+            if let Err(result) = self.get_proposal_vote(proposal_id) {
+                return Err(GovernorError::ProposalVoteNotFound)
+            }
+            let mut proposal_vote = self.get_proposal_vote(proposal_id).unwrap();
+            proposal_vote.count += 1;
+
+            if vote == VoteType::For {
+                proposal_vote.for_weight += weight;
+            }
+            else {
+                proposal_vote.against_weight += weight;
             }
 
-
-            // ? -->
-
-            // <-- ?
-
-
-            self.voters.insert(caller, &proposal_id);
+            self.proposal_votes.insert(proposal_id, &proposal_vote);
 
             return Ok(());
             // <-- ADD
@@ -219,26 +249,29 @@ pub mod dao {
                 return Err(GovernorError::ProposalAlreadyExecuted)
             }
 
+            if let Err(result) = self.get_proposal_vote(proposal_id) {
+                return Err(GovernorError::ProposalVoteNotFound)
+            }
+            let proposal_vote = self.get_proposal_vote(proposal_id).unwrap();
+            if self.quorum > proposal_vote.count {
+                return Err(GovernorError::QuorumNotReached)
+            }
+
+            if proposal_vote.for_weight <= proposal_vote.against_weight {
+                return Err(GovernorError::ProposalNotAccepted)
+            }
+
+            // -->
+
+            // I added this error handling because I couldn't implement 
+            // automatic execution of execute().
             let current = self.env().block_timestamp();
             if proposal.vote_end <= current {
                 return Err(GovernorError::VotePeriodNotEnded)
             }
 
-            //    return Err(GovernorError::QuorumNotReached)
+            // <--
 
-            //    return Err(GovernorError::ProposalNotAccepted)
-
-
-            // ? -->
-
-            // <-- ?
-    
-
-            let sender = self.env().caller();
-            let sender_balance = self.env().balance();
-            if sender_balance < proposal.amount {
-                return Err(GovernorError::NotEnoughBalance);
-            }
             self.env().transfer(proposal.to, proposal.amount);
 
             proposal.executed = true;
@@ -272,6 +305,22 @@ pub mod dao {
 
         // ADD -->
         #[ink(message)]
+        pub fn get_proposal_vote(&mut self, proposal_id: ProposalId) -> Result<ProposalVote, GovernorError> {
+
+            let proposal_vote: Option<ProposalVote> = self.proposal_votes.get(proposal_id);
+            match proposal_vote {
+                Some(proposal_vote) => {
+                    return Ok(proposal_vote);
+                }
+                None => {
+                    return Err(GovernorError::ProposalVoteNotFound)
+                }
+            }
+        }
+        // <-- ADD
+
+        // ADD -->
+        #[ink(message)]
         pub fn next_proposal_id(&self) -> u32 {
             return self.proposal_id;
         }
@@ -294,18 +343,15 @@ pub mod dao {
             ink::env::test::callee::<ink::env::DefaultEnvironment>()
         }
 
-        // swanky.config.jsonに記載されたaccountsをテスト用アカウントとして用意するということかな？
         fn default_accounts(
         ) -> ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment> {
             ink::env::test::default_accounts::<ink::env::DefaultEnvironment>()
         }
 
-        // テスト環境内のトランザクションの発信者の設定
         fn set_sender(sender: AccountId) {
             ink::env::test::set_caller::<ink::env::DefaultEnvironment>(sender);
         }
 
-        // 指定されたコントラクトに残高を設定
         fn set_balance(account_id: AccountId, balance: Balance) {
             ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(
                 account_id, balance,
@@ -348,54 +394,114 @@ pub mod dao {
                 }
             );
             assert_eq!(governor.next_proposal_id(), 1);
-            //assert_eq!(governor.next_proposal_id(), 2);
+        }
 
-            // 2023.08.08 ADD -->
-            /*
+        // ADD -->
+        #[ink::test]
+        fn vote_works() {
+            let accounts = default_accounts();
+            let mut governor = create_contract(1000);
+            let result = governor.propose(accounts.django, 100, 1);
+
             assert_eq!(
                 governor.vote(1, VoteType::For),
                 Err(GovernorError::ProposalNotFound)
             );
-            */
-            /*
+           
+            let mut proposal = governor.get_proposal(0).unwrap();
+            proposal.executed = true;
+            governor.proposals.insert(0, &proposal);
             assert_eq!(
-                governor.vote(1, VoteType::For),
+                governor.vote(0, VoteType::For),
                 Err(GovernorError::ProposalAlreadyExecuted)
             );
+
+            proposal.executed = false;
+            proposal.vote_end = 0;
+            governor.proposals.insert(0, &proposal);
             assert_eq!(
-                governor.vote(1, VoteType::For),
+                governor.vote(0, VoteType::For),
                 Err(GovernorError::VotePeriodEnded)
             );
-            */
-            /*
+
+            proposal.vote_end = 1;
+            governor.proposals.insert(0, &proposal);
             governor.vote(0, VoteType::For);
+            let proposal_vote = governor.get_proposal_vote(0).unwrap();
+            assert_eq!(
+                proposal_vote,
+                ProposalVote {
+                    count: 1,
+                    for_weight: 60,
+                    against_weight: 0,
+                }
+            );
+
+            assert_eq!(
+                governor.get_proposal_vote(1),
+                Err(GovernorError::ProposalVoteNotFound)
+            );
+        }
+        // <-- ADD
+
+        // ADD -->
+        #[ink::test]
+        fn execute_works() {
+            let accounts = default_accounts();
+            let mut governor = create_contract(1000);
+            let result = governor.propose(accounts.django, 100, 1);
 
             assert_eq!(
                 governor.execute(1),
                 Err(GovernorError::ProposalNotFound)
             );
-            */
-            /*
+           
+            let mut proposal = governor.get_proposal(0).unwrap();
+            proposal.executed = true;
+            governor.proposals.insert(0, &proposal);
             assert_eq!(
-                governor.execute(1),
+                governor.execute(0),
                 Err(GovernorError::ProposalAlreadyExecuted)
             );
+
+            proposal.executed = false;
+            proposal.vote_end = 1;
+            governor.proposals.insert(0, &proposal);
             assert_eq!(
-                governor.execute(1),
-                Err(GovernorError::VotePeriodNotEnded)
+                governor.execute(0),
+                Err(GovernorError::QuorumNotReached)
             );
-            */
-            governor.execute(0);
-            // <-- 2023.08.08 ADD
+
+            proposal.vote_end = 1;
+            governor.proposals.insert(0, &proposal);
+            governor.vote(0, VoteType::For);
+            let mut proposal_vote = governor.get_proposal_vote(0).unwrap();
+            proposal_vote.count = 50;
+
+            proposal_vote.for_weight = 0;
+            proposal_vote.against_weight = 50;
+            governor.proposal_votes.insert(0, &proposal_vote);
+            assert_eq!(
+                governor.execute(0),
+                Err(GovernorError::ProposalNotAccepted)
+            );
+
+            proposal_vote.for_weight = 50;
+            proposal_vote.against_weight = 0;
+            governor.proposal_votes.insert(0, &proposal_vote);
+            governor.proposal_votes.insert(0, &proposal_vote);
+            let result = governor.execute(0);
+            assert_eq!(result, Ok(()));
         }
+        // <-- ADD
 
         #[ink::test]
         fn quorum_not_reached() {
             let mut governor = create_contract(1000);
             let result = governor.propose(AccountId::from([0x02; 32]), 100, 1);
             assert_eq!(result, Ok(()));
-            //let execute = governor.execute(0);
-            //assert_eq!(execute, Err(GovernorError::QuorumNotReached));
+            let execute = governor.execute(0);
+            assert_eq!(execute, Err(GovernorError::QuorumNotReached));
         }
     }
 
