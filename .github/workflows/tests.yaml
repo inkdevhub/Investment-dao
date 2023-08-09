@@ -42,8 +42,8 @@ jobs:
     - name: Install cargo contract
       if: ${{ steps.check-cargo-contract.outcome == 'failure' }}
       run: |
-        cargo install cargo-dylint dylint-link
-        cargo install --force --locked cargo-contract
+        cargo +stable install cargo-dylint dylint-link
+        cargo +stable install --force --locked cargo-contract
 
     - name: Use Node.js
       uses: actions/setup-node@v3
